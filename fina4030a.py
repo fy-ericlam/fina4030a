@@ -25,7 +25,7 @@ import urllib.request
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
-__version__ = "0.8"
+__version__ = "1.0"
 
 
 # ---------------------------------------------------------------------------
@@ -82,13 +82,18 @@ _PROVIDERS = {
         # relying on any lab remembering to pause.
         "min_interval": 12.5,
         "weekly_quota": 100,
+        # Confirmed live 13 Aug 2026: gpt-5.4-mini accepts temperature but wants
+        # max_completion_tokens, not max_tokens. Starting on the right shape
+        # avoids one wasted 400 per session — which counts against the quota.
+        "param_style": 1,
     },
 }
 
 _last_call_at = [0.0]      # module-level so the throttle survives cell re-runs
 
 _state = {
-    "param_style": None,   # which request shape this model accepts
+    "param_style": None,
+    "param_label": None,   # which request shape this model accepts
     "provider": PROVIDER,
     "model": MODEL,
     "token": None,
@@ -153,6 +158,9 @@ def configure(provider: str | None = None,
         _state["base_url"] = base_url
     if token:
         _state["token"] = token
+    spec = _PROVIDERS.get(_state["provider"], {})
+    if _state["param_style"] is None:
+        _state["param_style"] = spec.get("param_style")
     if cache_path:
         with open(cache_path, "r", encoding="utf-8") as fh:
             payload = json.load(fh)
@@ -300,6 +308,7 @@ def complete(prompt: str,
                     text = out["choices"][0]["message"]["content"]
                     _state["base_url"] = url
                     _state["param_style"] = vi
+                    _state["param_label"] = label
                     note = "" if vi == 0 else f"request adapted: {label}"
                     if "temperature" not in body and temperature is not None:
                         note += ("; temperature was NOT accepted by this model, so "
@@ -527,6 +536,14 @@ def verify(quiet: bool = False) -> bool:
                            temperature=0.0, max_tokens=5)
             L.append(f"          [ OK ]  {time.time() - t0:.1f}s via {_state['base_url']}")
             L.append(f"          replied {out.strip()[:30]!r}")
+            lbl = _state.get("param_label")
+            if lbl:
+                L.append(f"          request shape accepted: {lbl}")
+                if "no temperature" in lbl:
+                    L.append("          NOTE  this model refuses the temperature "
+                             "parameter, so you")
+                    L.append("                cannot ask it for deterministic output "
+                             "at all.")
         except ModelError as e:
             ok = False
             body = " ".join(str(e).split())          # collapse newlines
