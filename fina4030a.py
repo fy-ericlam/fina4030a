@@ -25,7 +25,7 @@ import urllib.request
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
-__version__ = "0.7"
+__version__ = "0.8"
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +88,7 @@ _PROVIDERS = {
 _last_call_at = [0.0]      # module-level so the throttle survives cell re-runs
 
 _state = {
+    "param_style": None,   # which request shape this model accepts
     "provider": PROVIDER,
     "model": MODEL,
     "token": None,
@@ -120,6 +121,7 @@ class Call:
     seconds: float
     usage: dict = field(default_factory=dict)
     error: str | None = None
+    notes: str = ""            # e.g. temperature not accepted by this model
 
 
 TRANSCRIPT: list[Call] = []
@@ -242,20 +244,35 @@ def complete(prompt: str,
     token = _get_token()
     messages = ([{"role": "system", "content": system}] if system else []) + \
                [{"role": "user", "content": prompt}]
-    body = {"model": _state["model"], "messages": messages,
-            "max_tokens": max_tokens}
-    if temperature is not None:
-        body["temperature"] = temperature
-    if seed is not None:
-        body["seed"] = seed
+
+    # Model families disagree about request shape. Newer reasoning-style models
+    # reject max_tokens (wanting max_completion_tokens) and reject any
+    # temperature other than the default. Rather than hardcode a guess, try the
+    # shapes in order and remember which one this deployment accepts.
+    def _variants():
+        base = {"model": _state["model"], "messages": messages}
+        t = {} if temperature is None else {"temperature": temperature}
+        sd = {} if seed is None else {"seed": seed}
+        return [
+            ("max_tokens + temperature",         {**base, **t, **sd, "max_tokens": max_tokens}),
+            ("max_completion_tokens + temperature",
+                                                 {**base, **t, **sd, "max_completion_tokens": max_tokens}),
+            ("max_completion_tokens, no temperature",
+                                                 {**base, **sd, "max_completion_tokens": max_tokens}),
+            ("no length limit, no temperature",  {**base}),
+        ]
+
+    variants = _variants()
+    order = list(range(len(variants)))
+    if _state["param_style"] is not None:          # start with what worked before
+        i = _state["param_style"]
+        order = [i] + [j for j in order if j != i]
 
     if spec["auth"] == "bearer":
         headers = {"Authorization": f"Bearer {token}",
                    "Content-Type": "application/json",
                    "Accept": "application/json"}
     else:  # Azure API Management in front of Foundry
-        # eLearning confirmed the gateway accepts the Azure-style api-key header.
-        # Ocp-Apim-Subscription-Key is sent too, as a fallback if that changes.
         headers = {"api-key": token,
                    "Ocp-Apim-Subscription-Key": token,
                    "Content-Type": "application/json"}
@@ -266,8 +283,6 @@ def complete(prompt: str,
         raise ModelError(f"No base URL configured for provider {provider!r}. "
                          "Pass base_url= to configure().")
 
-    # Respect the provider's documented rate limit without any lab having to
-    # remember to. Sleeps only as long as is actually needed.
     gap = spec.get("min_interval", 0)
     if gap:
         wait = gap - (time.time() - _last_call_at[0])
@@ -278,38 +293,49 @@ def complete(prompt: str,
     last, tried = None, []
     for attempt in range(retries):
         for url in urls:
-            try:
-                out = _post(url, body, headers)
-                text = out["choices"][0]["message"]["content"]
-                _state["base_url"] = url          # remember what worked
-                secs = time.time() - t0
-                _record(prompt, system, temperature, seed, text, secs,
-                        out.get("usage", {}))
-                return text
-            except urllib.error.HTTPError as e:
-                detail = e.read().decode("utf-8", "replace")[:300]
-                last = f"HTTP {e.code}: {detail}"
-                if e.code == 401:
-                    raise ModelError(
-                        "Rejected: 401 Unauthorized. The token is missing, wrong, or "
-                        "lacks the models:read permission. Regenerate it on GitHub "
-                        "under Settings > Developer settings > Personal access tokens."
-                    ) from None
-                if e.code == 429:
-                    wait = 5 * (attempt + 1)
-                    print(f"  rate limited, waiting {wait}s "
-                          f"(attempt {attempt + 1} of {retries})")
-                    time.sleep(wait)
-                    break                            # retry outer loop
-                if e.code == 404:
-                    tried.append(url)
-                    continue                         # try the next candidate URL
-            except urllib.error.URLError as e:
-                last = f"network: {e.reason}"
-                continue
-            except (KeyError, IndexError, json.JSONDecodeError) as e:
-                last = f"unexpected response shape: {type(e).__name__}"
-                continue
+            for vi in order:
+                label, body = variants[vi]
+                try:
+                    out = _post(url, body, headers)
+                    text = out["choices"][0]["message"]["content"]
+                    _state["base_url"] = url
+                    _state["param_style"] = vi
+                    note = "" if vi == 0 else f"request adapted: {label}"
+                    if "temperature" not in body and temperature is not None:
+                        note += ("; temperature was NOT accepted by this model, so "
+                                 "the request could not ask for determinism")
+                    _record(prompt, system,
+                            body.get("temperature"), seed, text,
+                            time.time() - t0, out.get("usage", {}), notes=note)
+                    return text
+                except urllib.error.HTTPError as e:
+                    detail = e.read().decode("utf-8", "replace")[:500]
+                    last = f"HTTP {e.code}: {detail}"
+                    if e.code == 400:
+                        continue            # wrong request shape — try the next
+                    if e.code == 401:
+                        raise ModelError(
+                            f"401 Unauthorized. The {spec['env']} key is missing, "
+                            f"wrong, or not yet approved. Get or check it at "
+                            f"{spec.get('signup','')}") from None
+                    if e.code == 429:
+                        wait = 15 * (attempt + 1)
+                        print(f"  rate limited, waiting {wait}s "
+                              f"(attempt {attempt + 1} of {retries})")
+                        time.sleep(wait)
+                        break
+                    if e.code in (403, 410):
+                        raise ModelError(f"HTTP {e.code} — refused or withdrawn. "
+                                         f"{detail}") from None
+                    if e.code == 404:
+                        tried.append(url)
+                        break
+                except urllib.error.URLError as e:
+                    last = f"network: {e.reason}"
+                    break
+                except (KeyError, IndexError, json.JSONDecodeError) as e:
+                    last = f"unexpected response shape: {type(e).__name__}"
+                    break
 
     secs = time.time() - t0
     _record(prompt, system, temperature, seed, "", secs, {}, error=last)
@@ -329,12 +355,13 @@ def complete(prompt: str,
     )
 
 
-def _record(prompt, system, temperature, seed, response, secs, usage, error=None):
+def _record(prompt, system, temperature, seed, response, secs, usage,
+            error=None, notes=""):
     TRANSCRIPT.append(Call(
         n=len(TRANSCRIPT) + 1, when=_now(), provider=_state["provider"],
         model=_state["model"], temperature=temperature, seed=seed,
         system=system, prompt=prompt, response=response,
-        seconds=round(secs, 2), usage=usage or {}, error=error,
+        seconds=round(secs, 2), usage=usage or {}, error=error, notes=notes,
     ))
 
 
@@ -460,7 +487,8 @@ def verify(quiet: bool = False) -> bool:
             L.append(f"          [ OK ]  {len(ids)} model(s) visible")
         except ModelError as e:
             ok = False
-            L.append(f"          [FAIL]  {str(e).splitlines()[0]}")
+            body = " ".join(str(e).split())          # collapse newlines
+            L.append(f"          [FAIL]  {body[:400]}")
             L.append("")
             L.append("  Stop here. Nothing downstream can work until this does.")
             L.append(f"  Colab secret must be named {spec.get('env','?')} with")
@@ -501,7 +529,8 @@ def verify(quiet: bool = False) -> bool:
             L.append(f"          replied {out.strip()[:30]!r}")
         except ModelError as e:
             ok = False
-            L.append(f"          [FAIL]  {str(e).splitlines()[0]}")
+            body = " ".join(str(e).split())          # collapse newlines
+            L.append(f"          [FAIL]  {body[:400]}")
 
     q = spec.get("weekly_quota")
     if q:
@@ -544,6 +573,11 @@ def appendix(student: str = "", verification: str = "",
         f"- Endpoint: `{_state['base_url'] or 'n/a'}`",
         f"- Client: `fina4030a.py` v{__version__}",
         f"- Temperature(s) used: {', '.join(str(t) for t in temps)}",
+    ]
+    notes = sorted({c.notes for c in TRANSCRIPT if c.notes})
+    if notes:
+        md += ["- **Request adaptation:** " + "; ".join(notes)]
+    md += [
         "",
         "**2. The chain.**",
         "",
