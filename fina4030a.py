@@ -25,39 +25,51 @@ import urllib.request
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
-__version__ = "0.4"
+__version__ = "0.5"
 
-# GitHub returns 404 rather than a useful error if this header is missing.
-API_VERSION = "2026-03-10"
 
 # ---------------------------------------------------------------------------
 # Configuration.  Change PROVIDER here, nowhere else.
 # ---------------------------------------------------------------------------
 
-PROVIDER = "github"          # "github" | "cuhk_portal" | "cached" | "echo"
-MODEL    = "openai/gpt-4o-mini"
+PROVIDER = "groq"            # "groq" | "openrouter" | "cuhk_portal" | "cached" | "echo"
+MODEL    = "llama-3.3-70b-versatile"
+
+# GitHub Models was retired on 30 July 2026. Kept here only so that an old
+# notebook produces an explanation rather than a mystifying 404 or 410.
+_RETIRED = {
+    "github": ("GitHub Models was fully retired on 30 July 2026. Switch to "
+               "provider='groq' (free, no card) or provider='openrouter'. "
+               "See the setup cell at the top of the lab."),
+}
 
 _PROVIDERS = {
-    # GitHub Models. Free with any GitHub account; token needs the models:read
-    # permission. Two base URLs have existed; we probe the current one first and
-    # fall back to the legacy Azure host.
-    "github": {
-        "urls": [
-            "https://models.github.ai/inference/chat/completions",
-            "https://models.github.ai/v1/chat/completions",
-            "https://models.github.ai/chat/completions",
-            "https://models.inference.ai.azure.com/chat/completions",
-        ],
-        "catalog": "https://models.github.ai/catalog/models",
+    # Groq. Free tier, no card. 30 requests/min and 1,000/day on the 70B model
+    # — roughly a hundred runs of a ten-call lab per day.
+    "groq": {
+        "urls": ["https://api.groq.com/openai/v1/chat/completions"],
+        "catalog": "https://api.groq.com/openai/v1/models",
         "auth": "bearer",
-        "env": "GITHUB_TOKEN",
+        "env": "GROQ_API_KEY",
+        "signup": "https://console.groq.com  (sign in, then API Keys)",
+    },
+    # OpenRouter. Routes to many providers; the ':free' models cost nothing.
+    # Lower daily cap than Groq, but reachable almost everywhere.
+    "openrouter": {
+        "urls": ["https://openrouter.ai/api/v1/chat/completions"],
+        "catalog": "https://openrouter.ai/api/v1/models",
+        "auth": "bearer",
+        "env": "OPENROUTER_API_KEY",
+        "signup": "https://openrouter.ai/keys",
     },
     # CUHK API Portal (Azure API Management in front of Azure Foundry).
-    # Fill base_url and the subscription key from the portal before use.
+    # Fill base_url from the portal documentation before use.
     "cuhk_portal": {
         "urls": [""],
+        "catalog": None,
         "auth": "apim",
         "env": "CUHK_APIM_KEY",
+        "signup": "https://cuhk-apip.developer.azure-api.net",
     },
 }
 
@@ -189,6 +201,8 @@ def complete(prompt: str,
              retries: int = 3) -> str:
     """Send one prompt, return the text. Records the call in TRANSCRIPT."""
     provider = _state["provider"]
+    if provider in _RETIRED:
+        raise ModelError(_RETIRED[provider])
     t0 = time.time()
 
     if provider == "echo":
@@ -224,8 +238,7 @@ def complete(prompt: str,
     if spec["auth"] == "bearer":
         headers = {"Authorization": f"Bearer {token}",
                    "Content-Type": "application/json",
-                   "Accept": "application/vnd.github+json",
-                   "X-GitHub-Api-Version": API_VERSION}
+                   "Accept": "application/json"}
     else:  # Azure API Management
         headers = {"Ocp-Apim-Subscription-Key": token,
                    "Content-Type": "application/json"}
@@ -311,17 +324,22 @@ def list_models(show: int = 0) -> list:
     if not spec or not spec.get("catalog"):
         raise ModelError(f"No catalog endpoint for provider {_state['provider']!r}.")
     headers = {"Authorization": f"Bearer {_get_token()}",
-               "Accept": "application/vnd.github+json",
-               "X-GitHub-Api-Version": API_VERSION}
+               "Accept": "application/json"}
     try:
         data = _get_json(spec["catalog"], headers)
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:200]
         if e.code == 401:
-            raise ModelError("401 from the catalog. The token is missing, wrong, or "
-                             "lacks the Models read permission.") from None
+            raise ModelError(f"401 from the catalog. The {spec['env']} key is missing "
+                             f"or wrong. Get one at {spec.get('signup','')}") from None
+        if e.code in (403, 410):
+            raise ModelError(f"HTTP {e.code} — this service is refusing or has been "
+                             f"withdrawn. {body}") from None
         raise ModelError(f"Catalog request failed: HTTP {e.code} {body}") from None
-    items = data.get("models", data) if isinstance(data, dict) else data
+    if isinstance(data, dict):
+        items = data.get("data") or data.get("models") or []
+    else:
+        items = data
     ids = sorted({(m.get("id") or m.get("name") or "") for m in items
                   if isinstance(m, dict)} - {""})
     if show:
@@ -330,6 +348,52 @@ def list_models(show: int = 0) -> list:
         for i in ids[:show]:
             print("   ", i)
     return ids
+
+
+
+
+def probe(verbose: bool = True) -> dict:
+    """Try every provider for which a key is already available. Report what works.
+
+    Does not prompt for keys — only uses ones already in the environment or in
+    Colab's secrets panel, so it is safe to run without being asked anything.
+    """
+    import urllib.error as _ue
+    results = {}
+    saved = (_state["provider"], _state["token"], _state["base_url"])
+    for name, spec in _PROVIDERS.items():
+        key = os.environ.get(spec["env"])
+        if not key:
+            try:
+                from google.colab import userdata  # type: ignore
+                key = userdata.get(spec["env"])
+            except Exception:
+                key = None
+        if not key:
+            results[name] = "no key"
+            continue
+        if not [u for u in spec["urls"] if u]:
+            results[name] = "no base URL configured"
+            continue
+        _state.update(provider=name, token=key, base_url=None)
+        try:
+            complete("Reply with the word ok", temperature=0.0, max_tokens=5,
+                     retries=1)
+            results[name] = "WORKS"
+        except Exception as e:
+            results[name] = str(e).splitlines()[0][:80]
+    _state["provider"], _state["token"], _state["base_url"] = saved
+    if verbose:
+        print("Provider probe")
+        print("-" * 52)
+        for k, v in results.items():
+            mark = "[ OK ]" if v == "WORKS" else "[    ]" if v == "no key" else "[FAIL]"
+            print(f"  {mark}  {k:<14} {v}")
+        working = [k for k, v in results.items() if v == "WORKS"]
+        print()
+        print(f"  Use: fina4030a.configure(provider='{working[0]}')" if working
+              else "  No provider is currently usable. See the setup cell.")
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -369,8 +433,10 @@ def verify(quiet: bool = False) -> bool:
             L.append(f"          [FAIL]  {str(e).splitlines()[0]}")
             L.append("")
             L.append("  Stop here. Nothing downstream can work until this does.")
-            L.append("  Check the token has the Models read permission and that")
-            L.append("  Colab's secret is named GITHUB_TOKEN with notebook access on.")
+            L.append(f"  Colab secret must be named {spec.get('env','?')} with")
+            L.append("  notebook access toggled on. Get a key at:")
+            L.append(f"    {spec.get('signup', '')}")
+            L.append("  Or run  fina4030a.probe()  to see which providers do work.")
             _state["verified"] = False
             if not quiet:
                 print("\n".join(L))
