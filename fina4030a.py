@@ -25,7 +25,7 @@ import urllib.request
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
-__version__ = "0.6"
+__version__ = "0.7"
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +52,7 @@ _PROVIDERS = {
         "auth": "bearer",
         "env": "GROQ_API_KEY",
         "signup": "https://console.groq.com  (sign in, then API Keys)",
+        "min_interval": 2.0,
     },
     # OpenRouter. Routes to many providers; the ':free' models cost nothing.
     # Lower daily cap than Groq, but reachable almost everywhere.
@@ -61,6 +62,7 @@ _PROVIDERS = {
         "auth": "bearer",
         "env": "OPENROUTER_API_KEY",
         "signup": "https://openrouter.ai/keys",
+        "min_interval": 3.0,
     },
     # CUHK API Portal — Azure API Management in front of Azure AI Foundry.
     # Endpoint confirmed by CUHK eLearning, August 2026. This is the OpenAI v1
@@ -75,8 +77,15 @@ _PROVIDERS = {
         "auth": "apim",
         "env": "CUHK_APIM_KEY",
         "signup": "https://cuhk-apip.developer.azure-api.net",
+        # Starter plan: 5 calls per minute, 100 per week, weekly renewal.
+        # 12.5s between calls keeps us inside the per-minute limit without
+        # relying on any lab remembering to pause.
+        "min_interval": 12.5,
+        "weekly_quota": 100,
     },
 }
+
+_last_call_at = [0.0]      # module-level so the throttle survives cell re-runs
 
 _state = {
     "provider": PROVIDER,
@@ -256,6 +265,15 @@ def complete(prompt: str,
     if not urls:
         raise ModelError(f"No base URL configured for provider {provider!r}. "
                          "Pass base_url= to configure().")
+
+    # Respect the provider's documented rate limit without any lab having to
+    # remember to. Sleeps only as long as is actually needed.
+    gap = spec.get("min_interval", 0)
+    if gap:
+        wait = gap - (time.time() - _last_call_at[0])
+        if wait > 0:
+            time.sleep(wait)
+    _last_call_at[0] = time.time()
 
     last, tried = None, []
     for attempt in range(retries):
@@ -484,6 +502,14 @@ def verify(quiet: bool = False) -> bool:
         except ModelError as e:
             ok = False
             L.append(f"          [FAIL]  {str(e).splitlines()[0]}")
+
+    q = spec.get("weekly_quota")
+    if q:
+        L.append("")
+        L.append(f"  note     this plan allows {q} calls per week and "
+                 f"{int(60 / spec.get('min_interval', 60))} per minute.")
+        L.append(f"           {len(TRANSCRIPT)} call(s) made in this session. Calls are")
+        L.append("           paced automatically; you do not need to add pauses.")
 
     _state["verified"] = ok
     if not quiet:
