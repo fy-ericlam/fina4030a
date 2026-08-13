@@ -6,7 +6,7 @@ Course materials for FINA4030A, CUHK Business School, 2026–27 Term 1.
 
 Run this before the first class on **Thursday 10 September**. It takes about three minutes, it is not graded, and it installs nothing.
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/REPLACE-USERNAME/REPLACE-REPO/blob/main/FINA4030A_setup_check.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/fy-ericlam/fina4030a/blob/main/FINA4030A_setup_check.ipynb)
 
 1. Click the badge above.
 2. Put your name and student ID at the top of the first code cell.
