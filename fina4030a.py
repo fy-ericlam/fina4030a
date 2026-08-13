@@ -25,7 +25,10 @@ import urllib.request
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
-__version__ = "0.3"
+__version__ = "0.4"
+
+# GitHub returns 404 rather than a useful error if this header is missing.
+API_VERSION = "2026-03-10"
 
 # ---------------------------------------------------------------------------
 # Configuration.  Change PROVIDER here, nowhere else.
@@ -41,8 +44,11 @@ _PROVIDERS = {
     "github": {
         "urls": [
             "https://models.github.ai/inference/chat/completions",
+            "https://models.github.ai/v1/chat/completions",
+            "https://models.github.ai/chat/completions",
             "https://models.inference.ai.azure.com/chat/completions",
         ],
+        "catalog": "https://models.github.ai/catalog/models",
         "auth": "bearer",
         "env": "GITHUB_TOKEN",
     },
@@ -218,7 +224,8 @@ def complete(prompt: str,
     if spec["auth"] == "bearer":
         headers = {"Authorization": f"Bearer {token}",
                    "Content-Type": "application/json",
-                   "Accept": "application/vnd.github+json"}
+                   "Accept": "application/vnd.github+json",
+                   "X-GitHub-Api-Version": API_VERSION}
     else:  # Azure API Management
         headers = {"Ocp-Apim-Subscription-Key": token,
                    "Content-Type": "application/json"}
@@ -229,7 +236,7 @@ def complete(prompt: str,
         raise ModelError(f"No base URL configured for provider {provider!r}. "
                          "Pass base_url= to configure().")
 
-    last = None
+    last, tried = None, []
     for attempt in range(retries):
         for url in urls:
             try:
@@ -256,7 +263,8 @@ def complete(prompt: str,
                     time.sleep(wait)
                     break                            # retry outer loop
                 if e.code == 404:
-                    continue                         # try the other base URL
+                    tried.append(url)
+                    continue                         # try the next candidate URL
             except urllib.error.URLError as e:
                 last = f"network: {e.reason}"
                 continue
@@ -266,8 +274,15 @@ def complete(prompt: str,
 
     secs = time.time() - t0
     _record(prompt, system, temperature, seed, "", secs, {}, error=last)
+    hint = ""
+    if tried:
+        hint = ("\n\nEvery candidate endpoint returned 404:\n  "
+                + "\n  ".join(dict.fromkeys(tried))
+                + "\n\nA 404 here usually means the model id is wrong rather than the "
+                  "URL. Run  fina4030a.list_models(show=20)  to see what your token "
+                  "can reach, then fina4030a.configure(model='...').")
     raise ModelError(
-        f"Model call failed after {retries} attempts. Last error — {last}\n"
+        f"Model call failed after {retries} attempts. Last error — {last}{hint}\n"
         "If this is a rate limit, wait a minute. If it is a network error, check "
         "your VPN. If it persists, switch to the cached responses supplied with "
         "the lab so you can still complete it: fina4030a.configure("
@@ -284,37 +299,117 @@ def _record(prompt, system, temperature, seed, response, secs, usage, error=None
     ))
 
 
+def _get_json(url: str, headers: dict, timeout: int = 30):
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def list_models(show: int = 0) -> list:
+    """Return the model ids this token can actually reach. Use when a call 404s."""
+    spec = _PROVIDERS.get(_state["provider"])
+    if not spec or not spec.get("catalog"):
+        raise ModelError(f"No catalog endpoint for provider {_state['provider']!r}.")
+    headers = {"Authorization": f"Bearer {_get_token()}",
+               "Accept": "application/vnd.github+json",
+               "X-GitHub-Api-Version": API_VERSION}
+    try:
+        data = _get_json(spec["catalog"], headers)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:200]
+        if e.code == 401:
+            raise ModelError("401 from the catalog. The token is missing, wrong, or "
+                             "lacks the Models read permission.") from None
+        raise ModelError(f"Catalog request failed: HTTP {e.code} {body}") from None
+    items = data.get("models", data) if isinstance(data, dict) else data
+    ids = sorted({(m.get("id") or m.get("name") or "") for m in items
+                  if isinstance(m, dict)} - {""})
+    if show:
+        print(f"{len(ids)} model(s) available to this token. Showing "
+              f"{min(show, len(ids))}:")
+        for i in ids[:show]:
+            print("   ", i)
+    return ids
+
+
 # ---------------------------------------------------------------------------
 # Diagnostics
 # ---------------------------------------------------------------------------
 
 def verify(quiet: bool = False) -> bool:
-    """Check the configured provider actually answers. Safe to call anytime."""
-    lines = ["Model client check", "-" * 46,
-             f"  client version   {__version__}",
-             f"  provider         {_state['provider']}",
-             f"  model            {_state['model']}"]
+    """Check the configured provider answers, and say precisely what failed."""
+    L = ["Model client check", "-" * 52,
+         f"  client version   {__version__}",
+         f"  provider         {_state['provider']}",
+         f"  model            {_state['model']}"]
     ok = True
+
     if _state["provider"] in ("echo", "cached"):
         n = len(_state["cache"] or [])
-        lines.append(f"  cached responses {n}")
+        L.append(f"  cached responses {n}")
         ok = _state["provider"] == "echo" or n > 0
-        lines.append("  [ OK ]  offline mode ready" if ok
-                     else "  [FAIL]  no cache loaded")
-    else:
+        L.append("  [ OK ]  offline mode ready" if ok else "  [FAIL]  no cache loaded")
+        _state["verified"] = ok
+        if not quiet:
+            print("\n".join(L))
+        return ok
+
+    spec = _PROVIDERS.get(_state["provider"], {})
+    L.append("")
+
+    # step 1 — catalog. Isolates token and host from model id and path.
+    ids = []
+    if spec.get("catalog"):
+        L.append("  step 1  can the token reach the service?")
+        try:
+            ids = list_models()
+            L.append(f"          [ OK ]  {len(ids)} model(s) visible")
+        except ModelError as e:
+            ok = False
+            L.append(f"          [FAIL]  {str(e).splitlines()[0]}")
+            L.append("")
+            L.append("  Stop here. Nothing downstream can work until this does.")
+            L.append("  Check the token has the Models read permission and that")
+            L.append("  Colab's secret is named GITHUB_TOKEN with notebook access on.")
+            _state["verified"] = False
+            if not quiet:
+                print("\n".join(L))
+            return False
+
+        # step 2 — is the configured model actually one of them?
+        L.append(f"  step 2  is {_state['model']!r} in the catalog?")
+        if _state["model"] in ids:
+            L.append("          [ OK ]")
+        else:
+            ok = False
+            suffix = _state["model"].split("/")[-1].lower()
+            near = [i for i in ids if suffix in i.lower()][:5]
+            L.append("          [FAIL]  not available to this token")
+            if near:
+                L.append("          closest matches:")
+                L += [f"            {i}" for i in near]
+            else:
+                L.append("          a few that are available:")
+                L += [f"            {i}" for i in ids[:8]]
+            L.append("")
+            L.append("          Fix with: fina4030a.configure(model='<one of the above>')")
+
+    # step 3 — an actual completion
+    if ok:
+        L.append("  step 3  does a real call succeed?")
         try:
             t0 = time.time()
             out = complete("Reply with exactly the word: ready",
                            temperature=0.0, max_tokens=5)
-            lines.append(f"  endpoint         {_state['base_url']}")
-            lines.append(f"  [ OK ]  answered in {time.time() - t0:.1f}s "
-                         f"— {out.strip()[:30]!r}")
+            L.append(f"          [ OK ]  {time.time() - t0:.1f}s via {_state['base_url']}")
+            L.append(f"          replied {out.strip()[:30]!r}")
         except ModelError as e:
             ok = False
-            lines.append(f"  [FAIL]  {str(e).splitlines()[0]}")
+            L.append(f"          [FAIL]  {str(e).splitlines()[0]}")
+
     _state["verified"] = ok
     if not quiet:
-        print("\n".join(lines))
+        print("\n".join(L))
     return ok
 
 
