@@ -25,15 +25,15 @@ import urllib.request
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
-__version__ = "0.5"
+__version__ = "0.6"
 
 
 # ---------------------------------------------------------------------------
 # Configuration.  Change PROVIDER here, nowhere else.
 # ---------------------------------------------------------------------------
 
-PROVIDER = "groq"            # "groq" | "openrouter" | "cuhk_portal" | "cached" | "echo"
-MODEL    = "llama-3.3-70b-versatile"
+PROVIDER = "cuhk_portal"     # "cuhk_portal" | "groq" | "openrouter" | "cached" | "echo"
+MODEL    = "gpt-5.4-mini"
 
 # GitHub Models was retired on 30 July 2026. Kept here only so that an old
 # notebook produces an explanation rather than a mystifying 404 or 410.
@@ -62,11 +62,16 @@ _PROVIDERS = {
         "env": "OPENROUTER_API_KEY",
         "signup": "https://openrouter.ai/keys",
     },
-    # CUHK API Portal (Azure API Management in front of Azure Foundry).
-    # Fill base_url from the portal documentation before use.
+    # CUHK API Portal — Azure API Management in front of Azure AI Foundry.
+    # Endpoint confirmed by CUHK eLearning, August 2026. This is the OpenAI v1
+    # surface, so no api-version query parameter is required.
+    #   model        gpt-5.4-mini      tool calling  yes     vision  yes
+    #   max input    32,000 tokens     max output    4,096 tokens
+    # Starter subscriptions are rate limited on tokens as well as on calls, so
+    # keep max_tokens modest and pause between calls in a classroom.
     "cuhk_portal": {
-        "urls": [""],
-        "catalog": None,
+        "urls": ["https://cuhk-apip.azure-api.net/foundry-eus2/openai/v1/chat/completions"],
+        "catalog": "https://cuhk-apip.azure-api.net/foundry-eus2/openai/v1/models",
         "auth": "apim",
         "env": "CUHK_APIM_KEY",
         "signup": "https://cuhk-apip.developer.azure-api.net",
@@ -197,7 +202,7 @@ def complete(prompt: str,
              system: str | None = None,
              temperature: float | None = 0.0,
              seed: int | None = None,
-             max_tokens: int = 900,
+             max_tokens: int = 600,
              retries: int = 3) -> str:
     """Send one prompt, return the text. Records the call in TRANSCRIPT."""
     provider = _state["provider"]
@@ -239,8 +244,11 @@ def complete(prompt: str,
         headers = {"Authorization": f"Bearer {token}",
                    "Content-Type": "application/json",
                    "Accept": "application/json"}
-    else:  # Azure API Management
-        headers = {"Ocp-Apim-Subscription-Key": token,
+    else:  # Azure API Management in front of Foundry
+        # eLearning confirmed the gateway accepts the Azure-style api-key header.
+        # Ocp-Apim-Subscription-Key is sent too, as a fallback if that changes.
+        headers = {"api-key": token,
+                   "Ocp-Apim-Subscription-Key": token,
                    "Content-Type": "application/json"}
 
     urls = [_state["base_url"]] if _state["base_url"] else list(spec["urls"])
@@ -323,8 +331,12 @@ def list_models(show: int = 0) -> list:
     spec = _PROVIDERS.get(_state["provider"])
     if not spec or not spec.get("catalog"):
         raise ModelError(f"No catalog endpoint for provider {_state['provider']!r}.")
-    headers = {"Authorization": f"Bearer {_get_token()}",
-               "Accept": "application/json"}
+    tok = _get_token()
+    if spec["auth"] == "apim":
+        headers = {"api-key": tok, "Ocp-Apim-Subscription-Key": tok,
+                   "Accept": "application/json"}
+    else:
+        headers = {"Authorization": f"Bearer {tok}", "Accept": "application/json"}
     try:
         data = _get_json(spec["catalog"], headers)
     except urllib.error.HTTPError as e:
