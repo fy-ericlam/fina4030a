@@ -25,7 +25,7 @@ import urllib.request
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +222,25 @@ def complete(prompt: str,
              temperature: float | None = 0.0,
              seed: int | None = None,
              max_tokens: int = 600,
-             retries: int = 3) -> str:
-    """Send one prompt, return the text. Records the call in TRANSCRIPT."""
+             retries: int = 3,
+             history: list | None = None) -> str:
+    """Send one prompt, return the text. Records the call in TRANSCRIPT.
+
+    history — optional list of prior turns, each {"role": "user"|"assistant",
+    "content": "..."}, sent ahead of `prompt` so the model sees the earlier
+    exchange. Use it when the question only makes sense as a follow-up.
+    Omit it and every call is independent, which is the default and is what
+    Labs 1 and 2 rely on.
+    """
     provider = _state["provider"]
+    if history:
+        if not isinstance(history, list) or not all(
+                isinstance(m, dict) and m.get("role") in ("user", "assistant")
+                and isinstance(m.get("content"), str) for m in history):
+            raise ModelError(
+                "history must be a list of {'role': 'user' or 'assistant', "
+                "'content': '...'} dictionaries, oldest turn first. You passed "
+                f"{type(history).__name__}.")
     if provider in _RETIRED:
         raise ModelError(_RETIRED[provider])
     t0 = time.time()
@@ -251,6 +267,7 @@ def complete(prompt: str,
 
     token = _get_token()
     messages = ([{"role": "system", "content": system}] if system else []) + \
+               list(history or []) + \
                [{"role": "user", "content": prompt}]
 
     # Model families disagree about request shape. Newer reasoning-style models
@@ -310,6 +327,9 @@ def complete(prompt: str,
                     _state["param_style"] = vi
                     _state["param_label"] = label
                     note = "" if vi == 0 else f"request adapted: {label}"
+                    if history:
+                        note = (f"follow-up call carrying {len(history)} prior turn(s)"
+                                + ("; " + note if note else ""))
                     if "temperature" not in body and temperature is not None:
                         note += ("; temperature was NOT accepted by this model, so "
                                  "the request could not ask for determinism")
