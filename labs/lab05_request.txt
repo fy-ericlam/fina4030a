@@ -1,0 +1,12 @@
+The request, forwarded verbatim to the model that built this workbook:
+
+  Can you build me a three-statement model for Texas Instruments off the
+  attached SEC data - income statement, balance sheet, cash flow, last few
+  years plus a five-year forecast - and then a DCF off the back of it.
+  Standard assumptions are fine, use your judgement. I need something I can
+  walk the team through, so please put it in Excel with the formulas live
+  rather than a write-up. Flag anything that looks off.
+
+  Thanks - I'm on a call at 4 so before then if you can.
+
+The model received this text and lab05_financials.json. Nothing else.
