@@ -1,0 +1,7 @@
+window_m,portfolio,oos_months,oos_ann_return_pct,oos_ann_vol_pct,oos_sharpe
+36,min_variance,282,9.0969,12.1191,0.6138
+36,tangency,282,10.2607,17.1928,0.5004
+36,equal_weight_1overN,282,12.7186,16.6321,0.665
+120,min_variance,198,11.0169,11.6094,0.8296
+120,tangency,198,13.8854,14.4123,0.8673
+120,equal_weight_1overN,198,13.6867,16.1414,0.7621

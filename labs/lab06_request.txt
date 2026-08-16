@@ -1,0 +1,15 @@
+The request, forwarded verbatim to the model that built this optimiser:
+
+  Can you build me a mean-variance optimiser on the industry portfolios in the
+  attached file? Use the last three years of monthly data - that's the window
+  we look at.
+
+  I want the efficient frontier, the minimum-variance portfolio and the
+  tangency portfolio, with the weights for each, plus annualised return and
+  volatility so I can put them next to the benchmark. Python please, and make
+  it something I can re-run when the data updates. Standard approach is fine,
+  use your judgement.
+
+  Thursday if you can.
+
+The model received this text and lab06_returns.json. Nothing else.

@@ -1,0 +1,81 @@
+==========================================================================
+MEAN-VARIANCE OPTIMISER — 49 INDUSTRY PORTFOLIOS
+==========================================================================
+loaded 318 months x 49 industries, 200001 -> 202606
+missing cells recoded to NaN: 0
+settings: window=36m  long_only=True  cov=ledoit_wolf
+
+--------------------------------------------------------------------------
+PRIMARY RUN
+--------------------------------------------------------------------------
+
+  window: 202307 -> 202606  (36 months)
+    T=36 months, N=49 assets   rank(cov)=35   cond=6.27e+18
+    ** SINGULAR covariance: 14 zero eigenvalues, i.e. 14 portfolio directions with exactly zero
+       estimated risk. Sigma^-1 does not exist; the unconstrained frontier is unbounded.
+    mean-return noise/signal = 0.97 (median s.e. of a mean / cross-sectional spread of the means)
+    ** Expected returns are not identified at this window length; treat the tangency portfolio as indicative only.
+  Ledoit-Wolf shrinkage intensity = 0.161   cond after shrinkage = 108.3
+  risk-free (mean over window, annualised) = 4.58%
+
+  RESULTS
+            portfolio  ann_return_pct  ann_vol_pct  sharpe  n_holdings  max_weight_pct
+         min_variance           13.79         8.16    1.13          18           13.37
+             tangency           29.86        11.33    2.23          13           24.02
+  equal_weight_1overN           16.42        12.52    0.95          49            2.04
+
+  TOP 10 WEIGHTS (%)
+            min_variance  tangency  equal_weight_1overN
+  industry                                             
+  Smoke             3.53     24.02                 2.04
+  Hardw             1.29     22.35                 2.04
+  Chips             0.00     11.85                 2.04
+  Coal              6.82      8.92                 2.04
+  Drugs            12.70      6.73                 2.04
+  Gold              0.00      5.81                 2.04
+  Banks             0.00      3.93                 2.04
+  Mach              0.00      3.84                 2.04
+  Oil              10.72      3.81                 2.04
+  Other             4.36      3.35                 2.04
+
+--------------------------------------------------------------------------
+WINDOW SENSITIVITY — same optimiser, different estimation windows
+--------------------------------------------------------------------------
+ window_m    portfolio ann_return_pct ann_vol_pct sharpe  n_holdings  raw_cov_rank raw_cov_cond
+       36 min_variance          13.79        8.16  1.129          18            35     6.27e+18
+       36     tangency          29.86       11.33  2.232          13            35     6.27e+18
+       60 min_variance           8.48       10.68  0.470          13            49     2.73e+04
+       60     tangency          26.19       15.32  1.484           9            49     2.73e+04
+      120 min_variance          10.04       11.26  0.691          13            49     1.31e+03
+      120     tangency          25.00       17.35  1.311          10            49     1.31e+03
+      240 min_variance          10.15       11.20  0.765          10            49          780
+      240     tangency          15.96       13.97  1.029           9            49          780
+
+--------------------------------------------------------------------------
+ROLLING OUT-OF-SAMPLE BACKTEST — walk-forward, no look-ahead
+--------------------------------------------------------------------------
+ window_m           portfolio  oos_months oos_ann_return_pct oos_ann_vol_pct oos_sharpe
+       36        min_variance         282               9.10           12.12      0.614
+       36            tangency         282              10.26           17.19      0.500
+       36 equal_weight_1overN         282              12.72           16.63      0.665
+      120        min_variance         198              11.02           11.61      0.830
+      120            tangency         198              13.89           14.41      0.867
+      120 equal_weight_1overN         198              13.69           16.14      0.762
+  36-month estimation window -> NEITHER optimised portfolio beat naive 1/N
+  120-month estimation window -> min_variance, tangency beat 1/N
+
+--------------------------------------------------------------------------
+FILES WRITTEN
+--------------------------------------------------------------------------
+  /tmp/ind-opt/weights.csv
+  /tmp/ind-opt/summary.csv
+  /tmp/ind-opt/window_sensitivity.csv
+  /tmp/ind-opt/backtest.csv
+  /tmp/ind-opt/efficient_frontier.png
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: at this window the raw covariance matrix is singular
+(N=49 assets vs T=36 months). Shrinkage and the long-only
+constraint keep the optimiser numerically stable, but the underlying inputs
+are not identified. Treat the levels as indicative; prefer WINDOW_MONTHS=120.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

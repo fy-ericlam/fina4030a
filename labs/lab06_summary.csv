@@ -1,0 +1,4 @@
+portfolio,ann_return_pct,ann_vol_pct,sharpe,n_holdings,max_weight_pct
+min_variance,13.7904,8.1574,1.1295,18,13.3749
+tangency,29.8642,11.3288,2.2321,13,24.0205
+equal_weight_1overN,16.4241,12.5182,0.9464,49,2.0408
