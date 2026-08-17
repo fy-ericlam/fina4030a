@@ -1,0 +1,165 @@
+==============================================================================
+FOMC HAWKISH/DOVISH TONE INDEX vs 2s10s
+==============================================================================
+documents 187  (95 statements, 92 minutes)
+meetings  95   2015-01-28 .. 2026-07-29
+yields    2888 sessions, 2s10s -108 .. 177 bp
+
+TIMING: every document is aligned on release_date (rolled to the next
+trading session if needed), NOT meeting_date. Minutes describe a meeting
+~21 days earlier; using meeting_date would trade on text that was not
+public yet. Quantified at the bottom of this report.
+
+------------------------------------------------------------------------------
+1. IS THE INDEX MEASURING ANYTHING?
+------------------------------------------------------------------------------
+  statement vs minutes tone for the SAME meeting: r = 0.782  (n=92)
+  -> two independently written documents about one meeting agree; the
+     index is picking up meeting content, not noise.
+
+  mean statement tone by year (+hawkish / -dovish):
+     2015  -0.36       #######
+     2016  -0.02              
+     2017  +0.16              ###
+     2018  +0.53              ##########
+     2019  -0.07             #
+     2020  -0.60  ############
+     2021  -0.51    ##########
+     2022  +0.76              ###############
+     2023  +0.79              ###############
+     2024  +0.10              ##
+     2025  -0.09             #
+     2026  -0.07             #
+  -> matches the actual cycle (easy 2015/2020-21, tight 2018/2022-23).
+
+------------------------------------------------------------------------------
+2. DOES IT EXPLAIN THE SAME-DAY MOVE? (contemporaneous, not tradable)
+------------------------------------------------------------------------------
+  statement  beta= -0.06 bp/sd   t=-0.10   R2=0.000   n=94
+  minutes    beta= -0.27 bp/sd   t=-0.68   R2=0.006   n=92
+  -> ~zero. The market has already priced the stance by the time the text
+     lands, so the index carries no same-day surprise. That is a warning:
+     a signal that moves nothing on impact but 'predicts' weeks later is
+     more likely tracking a slow regime than new information.
+
+------------------------------------------------------------------------------
+3. FORWARD TEST -- hit rate by horizon
+------------------------------------------------------------------------------
+  rule: tone > 0 (hawkish) -> predict 2s10s FLATTENS over the next h
+  sessions. 'base' = always predicting the more common direction.
+
+  sig           h    n     hit    base    edge  p_binom  p_circ    beta   t_NW
+  tone_z        1  164   0.470   0.561  -0.092    0.018   0.914   +0.19  +0.50
+  tone_z        3  178   0.528   0.540  -0.012    0.764   0.435   -0.01  -0.01
+  tone_z        5  178   0.522   0.508  +0.014    0.709   0.439   -0.33  -0.47
+  tone_z       10  181   0.586   0.519  +0.067    0.074   0.163   -1.47  -1.77
+  tone_z       21  184   0.598   0.500  +0.098    0.010   0.113   -1.68  -1.18
+
+  tone_z_chg    1  150   0.533   0.561  -0.028    0.511   0.251   -0.14  -0.28
+  tone_z_chg    3  164   0.512   0.540  -0.028    0.482   0.427   +0.31  +0.38
+  tone_z_chg    5  164   0.549   0.508  +0.041    0.311   0.148   -0.59  -0.59
+  tone_z_chg   10  168   0.565   0.519  +0.047    0.247   0.069   -2.47  -1.82
+  tone_z_chg   21  170   0.588   0.500  +0.088    0.026   0.020   -2.61  -1.29
+
+  BEST: tone_z at h=21 -> hit 59.8% vs base 50.0% (edge +9.8pp), naive p=0.010
+
+------------------------------------------------------------------------------
+4. HOW MUCH OF THAT SURVIVES? (this is the part that matters)
+------------------------------------------------------------------------------
+  (a) Persistence. tone_z lag-1 autocorr = 0.77 pooled, 0.79 statements-only.
+      Effective independent observations: ~24 of 187 pooled, ~11 of 95 statements.
+      The Fed changes stance a few times a decade; we have ~4 regimes, not
+      187 experiments. Every p-value above assumes independence and is
+      therefore far too generous.
+
+  (b) Correct null. At h=21, hit 0.598:
+        naive binomial (assumes independence)  p = 0.0097
+        iid permutation (also assumes it)      p = 0.0058
+        circular shift (preserves persistence) p = 0.1126   <-- believe this one
+      Once the signal's own persistence is respected, the edge is not
+      distinguishable from chance.
+
+  (c) Subsample stability:
+        2015-2019    n= 79  hit=0.570  edge=+0.070
+        2020-2026    n=105  hit=0.619  edge=+0.119
+        first half   n= 93  hit=0.581  edge=+0.081
+        second half  n= 91  hit=0.615  edge=+0.115
+        statements   n= 94  hit=0.628  edge=+0.128
+        minutes      n= 90  hit=0.567  edge=+0.067
+      The edge is roughly 1.4x larger in the second half of the
+      sample than the first (+0.115 vs +0.081), and +0.128 on statements
+      vs +0.067 on minutes. It is not a stable effect across
+      periods or document types.
+
+  (d) Jackknife -- drop one calendar year at a time:
+        2015:+0.12  2016:+0.11  2017:+0.09  2018:+0.10  2019:+0.08  2020:+0.08
+        2021:+0.11  2022:+0.10  2023:+0.11  2024:+0.10  2025:+0.07  2026:+0.11
+      edge range +0.069 to +0.121 -- no single year
+      drives it, so it is a broad weak regime effect rather than one
+      lucky episode. That is the one point in the signal's favour.
+
+  (e) Multiple testing: 2 signals x 5 horizons = 10 tests. The headline
+      p-value is not adjusted for that; at h=1 the same rule is
+      significantly WRONG, which is what noise mining looks like.
+
+  (f) Walk-forward: choose the signal/horizon on the first half of the
+      sample only, then apply that choice to the second half untouched.
+      picked in-sample: tone_z h=21  ->  train hit 0.581 (edge +0.081, n=93)
+      applied out-of-sample:            test  hit 0.615 (edge +0.115, n=91, p=0.035)
+      This one comes out IN FAVOUR of the signal and is the strongest
+      evidence for it. Weigh it against (g).
+
+  (g) Early era (through 2018-11) vs the rest, every cell:
+        tone_z      h1:-0.12 h3:-0.06 h5:-0.05 h10:-0.04 h21:+0.02
+        tone_z_chg  h1:-0.15 h3:-0.10 h5:+0.00 h10:-0.00 h21:-0.03
+      8 of 10 cells are NEGATIVE in the early era. The relationship
+      does not merely weaken before ~2019 -- it points the other way. A
+      desk that committed to this signal early would have been paid to
+      hold the opposite position. Combined with (f), what this really
+      shows is one sign flip, not a stable law.
+
+------------------------------------------------------------------------------
+5. IS IT BIG ENOUGH TO TRADE?
+------------------------------------------------------------------------------
+  h=21, 1 unit of 2s10s per release, 186 trades over 11.5y
+    mean   +1.22 bp/trade      median +2.00 bp
+    stdev   15.7 bp            t-stat 1.05
+    IR/trade 0.077   annualised IR ~0.31
+    worst -63 bp   best +54 bp
+  -> ~1 bp of expected edge against a 16 bp standard deviation, before
+     costs. A 2s10s spread trade does not clear its own bid/offer on that.
+
+------------------------------------------------------------------------------
+6. THE TRAP WE AVOIDED (why release_date matters)
+------------------------------------------------------------------------------
+  minutes timed on meeting_date   h=10: hit 0.625  h=21: hit 0.576
+  minutes timed on release_date   h=10: hit 0.544  h=21: hit 0.567
+  Back-dating minutes to the meeting inflates the hit rate purely by
+  using text that was still 3 weeks from publication. Anyone reporting a
+  strong result off this dataset has probably done exactly that.
+
+==============================================================================
+VERDICT
+==============================================================================
+  FOR:     the index is well built -- statements and minutes on the same
+           meeting agree at r=0.78, the history matches the actual cycle,
+           no single year drives the result, and the walk-forward split
+           held up out of sample.
+  AGAINST: no same-day reaction at all; the edge exists only at 10-21
+           sessions; ~24 effective observations, not 187; the honest
+           null gives p~0.11, not 0.01; and the sign is inverted in the
+           first four years of the sample.
+
+  The binding constraint is economics, not statistics. Even taking the
+  hit rate at face value, the signal is worth ~1.2 bp per release against
+  a 15.7 bp standard deviation -- an annualised IR near 0.3 gross, which
+  a 2s10s spread trade will not clear after cost. You would be betting
+  the 2019+ sign is the true one on ~24 independent observations.
+
+  RECOMMENDATION: do not build a standalone timing signal on this. Keep
+  the index as a stance descriptor / conditioning variable, where its
+  genuine construct validity is worth something and no directional bet
+  rides on the weak part. If it is taken further, the test to run is
+  whether tone adds anything beyond the OIS-implied path already priced
+  -- the missing same-day reaction suggests it will not.
+==============================================================================

@@ -1,0 +1,26 @@
+FINA4030A — Lab 7
+The request that produced lab07_tone.py and lab07_tone_report.txt
+
+This is the entire instruction the system was given, verbatim. It was sent with
+lab07_fomc.json attached and nothing else — no follow-up, no correction, no hint
+about dates, look-ahead, costs or sample splits.
+
+------------------------------------------------------------------------------
+
+  Can you build me a hawkish/dovish index out of the FOMC text in the attached
+  file, and then check whether it has any predictive power for the Treasury
+  curve? I want to know whether there's a signal there before we spend more time
+  on it.
+
+  Something simple for the index is fine — you pick the method. For the test,
+  2s10s is what we watch, so use that. Give me the hit rate and whatever else
+  you'd want to see before believing it.
+
+  Python please, and keep it re-runnable when new meetings land. End of week.
+
+------------------------------------------------------------------------------
+
+Note what the request does not say. Nothing about which of the two date fields
+to join on, nothing about point-in-time data, nothing about transaction costs,
+nothing about splitting the sample. That is what a desk actually sends, and
+everything the analysis did beyond it, it decided to do on its own.
